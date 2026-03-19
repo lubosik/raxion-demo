@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raxion Demo</title>
+  <link rel="stylesheet" href="/demo.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-title">Raxion</div>
+        <div class="brand-sub">Mission Control</div>
+      </div>
+      <nav class="nav">
+        <a class="nav-link active" href="#overview" data-view="overview"><span class="nav-icon">◈</span><span>Overview</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#train-agent" data-view="train-agent"><span class="nav-icon">✦</span><span>Train Agent</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#jobs" data-view="jobs"><span class="nav-icon">◻</span><span>Jobs</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#pipeline" data-view="pipeline"><span class="nav-icon">▦</span><span>Pipeline</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#archived" data-view="archived"><span class="nav-icon">▤</span><span>Archived</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#inbox" data-view="inbox"><span class="nav-icon">◎</span><span>Inbox</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#activity" data-view="activity"><span class="nav-icon">◉</span><span>Activity</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#approvals" data-view="approvals"><span class="nav-icon">◷</span><span>Approvals</span><span class="nav-dot"></span></a>
+        <a class="nav-link" href="#controls" data-view="controls"><span class="nav-icon">▣</span><span>Controls</span><span class="nav-dot"></span></a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-status">Live</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="container">
+        <header class="page-header">
+          <button class="mobile-menu" id="toggle-sidebar" type="button">Menu</button>
+          <div>
+            <h1 class="page-title">Raxion</h1>
+            <div class="page-subtitle label-caps">Autonomous Recruiting Ops</div>
+          </div>
+          <div class="page-header-right">
+            <div class="demo-company">
+              <span class="demo-company-name" data-company>Your Agency</span>
+              <span class="stage-chip stage-qualified">Demo Mode</span>
+            </div>
+            <div class="button-row">
+              <button class="btn btn-secondary" id="refresh-dashboard" type="button">Refresh</button>
+              <button class="btn btn-primary" id="launch-job" type="button">Launch Job</button>
+            </div>
+          </div>
+        </header>
+
+        <div id="app" class="section"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="drawer-root"></div>
+  <div id="toast-root" class="toast-wrap"></div>
+  <div id="overlay-root"></div>
+
+  <script src="/demo.js"></script>
+</body>
+</html>
