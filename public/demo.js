@@ -637,7 +637,7 @@
 
   function renderWelcomeModal() {
     if (!STATE.welcomeOpen) return '';
-    return '<div class="modal-backdrop welcome-backdrop"></div><div class="modal-shell welcome-shell"><div class="surface modal-card welcome-card"><button class="welcome-close" type="button" data-action="dismiss-welcome" aria-label="Close">×</button><div class="label-caps">Welcome</div><h2 class="section-title">' + esc(welcomeName) + '</h2><p class="welcome-copy">This demo is set up to show how Raxion sources, scores, drafts outreach, handles approvals, and trains to your operating style. Start with Controls to see exactly what the system does.</p><div class="candidate-sub welcome-slug">Suggested outreach URL slug: ' + esc(makeCompanySlug(company)) + (recipientName ? `?name=${esc(recipientName)}` : '') + '</div><div class="button-row"><button class="btn btn-primary" type="button" data-action="dismiss-welcome">See How Raxion Works</button></div></div></div>';
+    return '<div class="modal-backdrop welcome-backdrop"></div><div class="modal-shell welcome-shell"><div class="surface modal-card welcome-card"><button class="welcome-close" type="button" data-action="dismiss-welcome" aria-label="Close">×</button><div class="label-caps">Welcome</div><h2 class="section-title">' + esc(welcomeName) + '</h2><p class="welcome-copy">This demo is set up to show how Raxion sources, scores, drafts outreach, handles approvals, and trains to your operating style. Start with Controls to see exactly what the system does.</p><div class="button-row"><button class="btn btn-primary" type="button" data-action="dismiss-welcome">See How Raxion Works</button></div></div></div>';
   }
 
   function render() {

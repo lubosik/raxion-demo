@@ -1287,13 +1287,6 @@ tbody tr:last-child td {
   font-size: 0.98rem;
 }
 
-.welcome-slug {
-  margin-bottom: 20px;
-  color: var(--muted);
-  font-family: 'DM Mono', monospace;
-  font-size: 0.78rem;
-}
-
 .approval-editor-textarea {
   min-height: 320px;
 }
