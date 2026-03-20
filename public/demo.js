@@ -73,6 +73,7 @@
   const drawerRoot = document.getElementById('drawer-root');
   const toastRoot = document.getElementById('toast-root');
   const overlayRoot = document.getElementById('overlay-root');
+  const mobileNavBackdrop = document.getElementById('mobile-nav-backdrop');
   const params = new URLSearchParams(window.location.search);
   const company = slugToCompany(window.location.pathname);
   const recipientName = normaliseFirstName(params.get('name'));
@@ -213,6 +214,7 @@
   function navigate(page, options = {}) {
     closeCurrentPageTracking();
     STATE.view = page;
+    document.body.classList.remove('sidebar-open');
     SESSION.currentPage = page;
     SESSION.currentPageEnteredAt = new Date().toISOString();
     trackEvent('PAGE_VIEW', page);
@@ -942,6 +944,7 @@
     });
 
     document.getElementById('launch-job').addEventListener('click', () => {
+      document.body.classList.remove('sidebar-open');
       navigate('jobs');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -950,9 +953,21 @@
       document.body.classList.toggle('sidebar-open');
     });
 
+    mobileNavBackdrop?.addEventListener('click', () => {
+      document.body.classList.remove('sidebar-open');
+    });
+
     window.addEventListener('hashchange', () => {
       const next = (window.location.hash || '#overview').slice(1) || 'overview';
       if (next !== STATE.view) navigate(next, { updateHash: false });
+    });
+
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 960) document.body.classList.remove('sidebar-open');
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') document.body.classList.remove('sidebar-open');
     });
 
     window.addEventListener('beforeunload', () => {

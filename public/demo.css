@@ -56,6 +56,10 @@ body {
   overflow-x: hidden;
 }
 
+body.sidebar-open {
+  overflow: hidden;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -206,12 +210,16 @@ th {
 
 .mobile-menu {
   display: none;
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid rgba(24, 32, 27, 0.12);
   border-radius: var(--radius);
   background: var(--panel);
   cursor: pointer;
+}
+
+.mobile-nav-backdrop {
+  display: none;
 }
 
 .section {
@@ -1306,15 +1314,32 @@ tbody tr:last-child td {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 8px;
+    font-weight: 700;
+    position: relative;
+    z-index: 46;
   }
 
   .sidebar {
     transform: translateX(-100%);
     transition: transform 0.2s ease;
+    box-shadow: none;
+    max-width: min(84vw, 320px);
   }
 
   body.sidebar-open .sidebar {
     transform: translateX(0);
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(24, 32, 27, 0.34);
+    z-index: 35;
+  }
+
+  body.sidebar-open .mobile-nav-backdrop {
+    display: block;
   }
 
   .main {
@@ -1345,7 +1370,7 @@ tbody tr:last-child td {
   .form-grid,
   .panel-grid,
   .job-snapshot-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .page-title {
@@ -1354,6 +1379,30 @@ tbody tr:last-child td {
 
   .activity-event-row {
     gap: 10px;
+  }
+
+  .page-header-right,
+  .demo-company {
+    width: 100%;
+  }
+
+  .page-header-right {
+    align-items: flex-start;
+  }
+
+  .page-header-right .button-row {
+    width: 100%;
+  }
+
+  .page-header-right .button-row .btn {
+    flex: 1 1 0;
+  }
+
+  .sourcing-card {
+    right: 18px;
+    left: 18px;
+    bottom: 18px;
+    width: auto;
   }
 }
 
@@ -1378,6 +1427,39 @@ tbody tr:last-child td {
   .config-card,
   .job-card {
     padding: 20px;
+  }
+
+  .metric-strip,
+  .metric-strip-job,
+  .jobs-grid,
+  .health-grid,
+  .config-grid,
+  .form-grid,
+  .panel-grid,
+  .job-snapshot-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    gap: 16px;
+  }
+
+  .page-title {
+    font-size: 1.95rem;
+  }
+
+  .demo-banner-top {
+    font-size: 0.92rem;
+  }
+
+  .button-row .btn,
+  .button-row .book-call-link.btn {
+    width: 100%;
+  }
+
+  .sidebar {
+    width: min(84vw, 320px);
+    padding-top: 22px;
   }
 }
 
