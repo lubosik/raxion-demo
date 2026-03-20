@@ -3,11 +3,11 @@ import express from 'express';
 import cron from 'node-cron';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { getDbPath, getPendingSessions, markSessionsReported, upsertSession } from './db.js';
 
 const app = express();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3002;
-const sessionStore = [];
 const GATEWAY_URL = 'https://gateway.maton.ai/google-mail/gmail/v1/users/me/messages/send';
 
 app.use(express.json({ type: '*/*', limit: '2mb' }));
@@ -18,13 +18,7 @@ app.post('/api/track', (req, res) => {
     const session = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     if (!session || !session.id) return res.sendStatus(400);
 
-    const existingIndex = sessionStore.findIndex((item) => item.id === session.id);
-    if (existingIndex >= 0) {
-      sessionStore[existingIndex] = session;
-    } else {
-      sessionStore.push(session);
-    }
-
+    upsertSession(session);
     console.log(`[TRACK] Session from ${session.slug || 'unknown'} — ${session.events?.length || 0} events, ${session.totalDuration || 0}s`);
     return res.sendStatus(200);
   } catch (error) {
@@ -35,21 +29,24 @@ app.post('/api/track', (req, res) => {
 
 app.get('/api/report/preview', (req, res) => {
   if (!isLocalRequest(req)) return res.status(403).send('Forbidden');
-  if (!sessionStore.length) {
+  const sessions = getPendingSessions();
+  if (!sessions.length) {
     return res.send('<p>No sessions recorded yet. Visit the demo site first, then come back here.</p>');
   }
-  return res.send(buildWeeklyReportHTML([...sessionStore]));
+  return res.send(buildWeeklyReportHTML(sessions));
 });
 
 app.get('/api/report/send-now', async (req, res) => {
   if (!isLocalRequest(req)) return res.status(403).send('Forbidden');
-  if (!sessionStore.length) {
+  const sessions = getPendingSessions();
+  if (!sessions.length) {
     return res.send('No sessions recorded yet.');
   }
 
   try {
-    const html = buildWeeklyReportHTML([...sessionStore]);
+    const html = buildWeeklyReportHTML(sessions);
     await sendWeeklyReport(html);
+    markSessionsReported(sessions.map((session) => session.id));
     return res.send('Report sent successfully.');
   } catch (error) {
     return res.status(500).send(`Failed: ${error.message}`);
@@ -61,22 +58,24 @@ app.get('*', (req, res) => {
 });
 
 cron.schedule('0 8 * * 1', async () => {
-  if (!sessionStore.length) {
+  const sessions = getPendingSessions();
+  if (!sessions.length) {
     console.log('[REPORT] No sessions this week, skipping report.');
     return;
   }
 
   try {
-    const html = buildWeeklyReportHTML([...sessionStore]);
+    const html = buildWeeklyReportHTML(sessions);
     await sendWeeklyReport(html);
-    sessionStore.length = 0;
-    console.log('[REPORT] Session store cleared. Ready for next week.');
+    markSessionsReported(sessions.map((session) => session.id));
+    console.log(`[REPORT] Marked ${sessions.length} session(s) as reported.`);
   } catch (error) {
     console.error('[REPORT] Failed to send weekly report:', error.message);
   }
 }, { timezone: 'Europe/London' });
 
 console.log('[CRON] Weekly report scheduled for Mondays at 08:00 London time');
+console.log(`[DB] SQLite session store ready at ${getDbPath()}`);
 
 app.listen(PORT, () => {
   console.log(`Raxion Demo running on http://localhost:${PORT}`);

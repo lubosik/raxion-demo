@@ -2,3 +2,7 @@ node_modules/
 raxion-demo.log
 .DS_Store
 .env
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
