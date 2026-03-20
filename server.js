@@ -13,6 +13,10 @@ const GATEWAY_URL = 'https://gateway.maton.ai/google-mail/gmail/v1/users/me/mess
 app.use(express.json({ type: '*/*', limit: '2mb' }));
 app.use(express.static(join(__dirname, 'public')));
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 app.post('/api/track', (req, res) => {
   try {
     const session = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
@@ -77,9 +81,29 @@ cron.schedule('0 8 * * 1', async () => {
 console.log('[CRON] Weekly report scheduled for Mondays at 08:00 London time');
 console.log(`[DB] SQLite session store ready at ${getDbPath()}`);
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Raxion Demo running on http://localhost:${PORT}`);
 });
+
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[SHUTDOWN] Received ${signal}. Closing server gracefully.`);
+  server.close(() => {
+    console.log('[SHUTDOWN] HTTP server closed.');
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error('[SHUTDOWN] Forced exit after timeout.');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 function isLocalRequest(req) {
   const source = `${req.ip || ''} ${req.connection?.remoteAddress || ''} ${req.socket?.remoteAddress || ''}`;
