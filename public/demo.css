@@ -1458,6 +1458,10 @@ tbody tr:last-child td {
   align-items: center;
 }
 
+.controls-cta .book-call-link.btn {
+  color: #111111;
+}
+
 .empty-hero {
   display: flex;
   justify-content: space-between;
