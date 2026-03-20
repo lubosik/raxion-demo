@@ -1287,6 +1287,13 @@ tbody tr:last-child td {
   font-size: 0.98rem;
 }
 
+.welcome-slug {
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.78rem;
+}
+
 .approval-editor-textarea {
   min-height: 320px;
 }
@@ -1415,6 +1422,11 @@ tbody tr:last-child td {
 }
 
 .demo-banner-top a {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.book-call-link {
   color: var(--accent-strong);
   font-weight: 700;
 }

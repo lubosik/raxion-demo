@@ -73,8 +73,11 @@
   const drawerRoot = document.getElementById('drawer-root');
   const toastRoot = document.getElementById('toast-root');
   const overlayRoot = document.getElementById('overlay-root');
-  const sidebar = document.getElementById('sidebar');
+  const params = new URLSearchParams(window.location.search);
   const company = slugToCompany(window.location.pathname);
+  const recipientName = normaliseFirstName(params.get('name'));
+  const welcomeName = recipientName ? `${recipientName}, welcome to Raxion for ${company}` : `Welcome to Raxion for ${company}`;
+
   const STATE = {
     view: (window.location.hash || '#overview').slice(1) || 'overview',
     selectedJobId: null,
@@ -86,7 +89,6 @@
     activityLog: [],
     trainAgent: JSON.parse(JSON.stringify(TRAIN_DEFAULTS)),
     sourcingActive: false,
-    sourcingJobId: null,
     sourcingCount: 0,
     sourcingMessageIndex: 0,
     metrics: {
@@ -105,6 +107,20 @@
     activityTicker: null,
   };
 
+  const SESSION = {
+    id: window.crypto?.randomUUID?.() || `session_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    slug: company,
+    url: window.location.href,
+    referrer: document.referrer || 'direct',
+    startedAt: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    pages: [],
+    events: [],
+    currentPage: null,
+    currentPageEnteredAt: null,
+    sent: false,
+  };
+
   const STAGE_META = {
     sourced: { cls: 'stage-sourced', label: 'Sourced' },
     shortlisted: { cls: 'stage-shortlisted', label: 'Shortlisted' },
@@ -115,26 +131,40 @@
   };
 
   function slugToCompany(pathname) {
-    const raw = String(pathname || '/').replace(/^\/+|\/+$/g, '');
+    const raw = decodeURIComponent(String(pathname || '/').replace(/^\/+|\/+$/g, ''));
     if (!raw) return 'Your Agency';
     const normalized = raw
       .replace(/[-_]+/g, ' ')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
       .trim();
-    const suffixes = ['global', 'group', 'partners', 'holdings', 'talent', 'search', 'recruitment', 'recruit', 'agency', 'solutions', 'ventures', 'arnold'];
-    let spaced = normalized;
-    if (!/\s/.test(normalized)) {
-      const lower = normalized.toLowerCase();
-      const suffix = suffixes.find((item) => lower.endsWith(item) && lower !== item);
-      if (suffix) {
-        spaced = `${normalized.slice(0, normalized.length - suffix.length)} ${suffix}`;
-      }
-    }
-    return spaced
-      .split(/\s+/)
+
+    if (!normalized) return 'Your Agency';
+
+    return normalized
+      .split(' ')
       .filter(Boolean)
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .map((word) => {
+        if (word === '&') return '&';
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      })
       .join(' ');
+  }
+
+  function makeCompanySlug(value) {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[^\w\s&-]/g, '')
+      .replace(/&/g, ' and ')
+      .replace(/[_\s]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+  }
+
+  function normaliseFirstName(value) {
+    const clean = String(value || '').trim().replace(/[^a-zA-Z'-]/g, '');
+    if (!clean) return '';
+    return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
   }
 
   function esc(value) {
@@ -160,6 +190,36 @@
 
   function nowIso() {
     return new Date().toISOString();
+  }
+
+  function trackEvent(type, detail = '') {
+    SESSION.events.push({ type, detail, timestamp: new Date().toISOString() });
+  }
+
+  function closeCurrentPageTracking() {
+    if (!SESSION.currentPage || !SESSION.currentPageEnteredAt) return;
+    const exitedAt = new Date().toISOString();
+    const duration = Math.round((Date.now() - new Date(SESSION.currentPageEnteredAt).getTime()) / 1000);
+    SESSION.pages.push({
+      page: SESSION.currentPage,
+      enteredAt: SESSION.currentPageEnteredAt,
+      exitedAt,
+      duration,
+    });
+    SESSION.currentPage = null;
+    SESSION.currentPageEnteredAt = null;
+  }
+
+  function navigate(page, options = {}) {
+    closeCurrentPageTracking();
+    STATE.view = page;
+    SESSION.currentPage = page;
+    SESSION.currentPageEnteredAt = new Date().toISOString();
+    trackEvent('PAGE_VIEW', page);
+    if (options.updateHash !== false) {
+      window.location.hash = page;
+    }
+    render();
   }
 
   function activeJobs() {
@@ -210,11 +270,6 @@
       .join('');
   }
 
-  function percent(value, total) {
-    if (!total) return 0;
-    return `${Math.round((value / total) * 100)}%`;
-  }
-
   function relativeTime(iso) {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.max(0, Math.floor(diff / 60000));
@@ -253,7 +308,7 @@
     STATE.metrics.shortlisted = relevant.filter((candidate) => candidate.tier !== 'COLD' && candidate.stage !== 'archived').length;
     STATE.metrics.outreachSent = relevant.filter((candidate) => candidate.stage === 'outreach').length;
     STATE.metrics.replies = relevant.filter((candidate) => candidate.hasReplied).length;
-    STATE.metrics.queuedApprovals = STATE.approvals.filter((item) => item.status === 'pending').length;
+    STATE.metrics.queuedApprovals = STATE.approvals.filter((item) => item.status === 'pending' && !item.removed).length;
     STATE.metrics.activeJobs = active.length;
     active.forEach((job) => {
       const candidates = STATE.candidates.filter((candidate) => candidate.jobId === job.id);
@@ -262,10 +317,59 @@
     });
   }
 
+  function sessionSnapshot() {
+    const snapshot = {
+      ...SESSION,
+      pages: [...SESSION.pages],
+      events: [...SESSION.events],
+      url: window.location.href,
+      endedAt: new Date().toISOString(),
+      totalDuration: Math.round((Date.now() - new Date(SESSION.startedAt).getTime()) / 1000),
+    };
+
+    if (SESSION.currentPage && SESSION.currentPageEnteredAt) {
+      snapshot.pages.push({
+        page: SESSION.currentPage,
+        enteredAt: SESSION.currentPageEnteredAt,
+        exitedAt: snapshot.endedAt,
+        duration: Math.round((Date.now() - new Date(SESSION.currentPageEnteredAt).getTime()) / 1000),
+      });
+    }
+
+    return snapshot;
+  }
+
+  function flushSession() {
+    if (SESSION.sent) return;
+    const snapshot = sessionSnapshot();
+    closeCurrentPageTracking();
+    SESSION.endedAt = snapshot.endedAt;
+    SESSION.totalDuration = snapshot.totalDuration;
+    const body = JSON.stringify(snapshot);
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+      navigator.sendBeacon('/api/track', blob);
+    }
+    SESSION.sent = true;
+  }
+
+  function flushSessionWithoutLock() {
+    const snapshot = sessionSnapshot();
+    const body = JSON.stringify(snapshot);
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+      navigator.sendBeacon('/api/track', blob);
+    }
+  }
+
+  function bookCallLink(source, label) {
+    return `<a class="book-call-link${source === 'controls' ? ' btn btn-primary' : ''}" data-action="book-call" data-source="${esc(source)}" href="${esc(BOOKING_URL)}" target="_blank" rel="noreferrer">${esc(label)}</a>`;
+  }
+
   function demoBanner() {
     return (
       '<div class="surface demo-banner">' +
-        '<div class="demo-banner-top">🎯 This is a personalised demo for <strong data-company>' + esc(company) + '</strong> — no real data is connected. <a href="' + esc(BOOKING_URL) + '" target="_blank" rel="noreferrer">Book a call to see the live system →</a></div>' +
+        '<div class="demo-banner-top">🎯 This is a personalised demo for <strong data-company>' + esc(company) + '</strong> — no real data is connected. ' + bookCallLink('banner', 'Book a call to see the live system →') + '</div>' +
         '<div class="demo-banner-sub">Autonomous outbound sourcing · Inbound application screening · Interview scheduling · All on autopilot.</div>' +
       '</div>'
     );
@@ -291,7 +395,6 @@
         `<td><div class="button-row"><button class="btn btn-primary btn-sm" data-action="open-job" data-id="${esc(job.id)}">View</button><button class="btn btn-secondary btn-sm" data-action="source-now" data-id="${esc(job.id)}">Source Now</button></div></td>` +
       '</tr>'
     )).join('') || '<tr><td colspan="5">No active pipelines. Launch a job to begin.</td></tr>';
-    const activityRows = renderActivityRows(STATE.activityLog.slice(0, 10));
 
     return (
       '<section class="view-section">' +
@@ -311,7 +414,7 @@
           '</div>' +
           '<div class="surface">' +
             '<div class="section-head"><div><div class="label-caps">Live Activity</div><h2 class="section-title">Latest Events</h2></div></div>' +
-            '<div class="activity-feed">' + activityRows + '</div>' +
+            '<div class="activity-feed">' + renderActivityRows(STATE.activityLog.slice(0, 10)) + '</div>' +
           '</div>' +
         '</div>' +
       '</section>'
@@ -363,7 +466,7 @@
     if (candidate.jobId !== selectedJob()?.id) return false;
     const tab = STATE.selectedPipelineTab;
     if (tab === 'all') return candidate.stage !== 'archived';
-    if (tab === 'shortlisted') return candidate.stage === 'shortlisted' || candidate.stage === 'outreach' || candidate.stage === 'replied';
+    if (tab === 'shortlisted') return ['shortlisted', 'outreach', 'replied'].includes(candidate.stage);
     if (tab === 'outreach') return candidate.stage === 'outreach';
     if (tab === 'replies') return candidate.hasReplied;
     if (tab === 'archived') return candidate.stage === 'archived';
@@ -386,13 +489,11 @@
       return (
         '<section class="view-section">' +
           demoBanner() +
-          '<div class="surface"><div class="job-detail-header"><div><div class="label-caps">Pipeline</div><h2 class="section-title">' + esc(job.title) + '</h2><div class="job-detail-sub">' + esc(job.client) + ' · ' + esc(job.location) + '</div></div><div class="button-row"><button class="btn btn-secondary btn-sm" data-action="source-now" data-id="' + esc(job.id) + '">Source Now</button></div></div>' +
-          '<div class="tab-row pipeline-tabs">' + tabs + '</div><div class="activity-feed">' + renderActivityRows(selectedJobActivity()) + '</div></div></section>'
+          '<div class="surface"><div class="job-detail-header"><div><div class="label-caps">Pipeline</div><h2 class="section-title">' + esc(job.title) + '</h2><div class="job-detail-sub">' + esc(job.client) + ' · ' + esc(job.location) + '</div></div><div class="button-row"><button class="btn btn-secondary btn-sm" data-action="source-now" data-id="' + esc(job.id) + '">Source Now</button></div></div><div class="tab-row pipeline-tabs">' + tabs + '</div><div class="activity-feed">' + renderActivityRows(selectedJobActivity()) + '</div></div></section>'
       );
     }
 
-    const candidates = selectedJobCandidates().filter(candidateFitsTab);
-    const rows = candidates.map((candidate) => (
+    const rows = selectedJobCandidates().filter(candidateFitsTab).map((candidate) => (
       '<tr data-action="open-candidate" data-id="' + esc(candidate.id) + '">' +
         `<td><strong>${esc(candidate.name)}</strong></td>` +
         `<td>${esc(candidate.title)} / ${esc(candidate.company)}</td>` +
@@ -407,18 +508,12 @@
     return (
       '<section class="view-section">' +
         demoBanner() +
-        '<div class="surface">' +
-          '<div class="job-detail-header"><div><div class="label-caps">Pipeline</div><h2 class="section-title">' + esc(job.title) + '</h2><div class="job-detail-sub">' + esc(job.client) + ' · ' + esc(job.location) + '</div></div><div class="button-row"><button class="btn btn-secondary btn-sm" data-action="source-now" data-id="' + esc(job.id) + '">Source Now</button></div></div>' +
-          '<div class="tab-row pipeline-tabs">' + tabs + '</div>' +
-          '<div class="table-shell"><table><thead><tr><th>Name</th><th>Current Role / Company</th><th>Experience</th><th>Fit Score</th><th>Tier</th><th>Stage</th><th>Last Action</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-        '</div>' +
-      '</section>'
+        '<div class="surface"><div class="job-detail-header"><div><div class="label-caps">Pipeline</div><h2 class="section-title">' + esc(job.title) + '</h2><div class="job-detail-sub">' + esc(job.client) + ' · ' + esc(job.location) + '</div></div><div class="button-row"><button class="btn btn-secondary btn-sm" data-action="source-now" data-id="' + esc(job.id) + '">Source Now</button></div></div><div class="tab-row pipeline-tabs">' + tabs + '</div><div class="table-shell"><table><thead><tr><th>Name</th><th>Current Role / Company</th><th>Experience</th><th>Fit Score</th><th>Tier</th><th>Stage</th><th>Last Action</th></tr></thead><tbody>' + rows + '</tbody></table></div></div></section>'
     );
   }
 
   function renderArchived() {
-    const candidates = STATE.candidates.filter((candidate) => candidate.stage === 'archived');
-    const rows = candidates.map((candidate) => (
+    const rows = STATE.candidates.filter((candidate) => candidate.stage === 'archived').map((candidate) => (
       '<tr data-action="open-candidate" data-id="' + esc(candidate.id) + '">' +
         `<td><strong>${esc(candidate.name)}</strong></td>` +
         `<td>${esc(candidate.title)} / ${esc(candidate.company)}</td>` +
@@ -432,16 +527,13 @@
   }
 
   function renderInbox() {
-    const replies = STATE.candidates.filter((candidate) => candidate.hasReplied);
-    const cards = replies.map((candidate) => {
+    const cards = STATE.candidates.filter((candidate) => candidate.hasReplied).map((candidate) => {
       const draft = STATE.inboxDrafts[candidate.id] || `Thanks ${candidate.name.split(' ')[0]} — appreciate the reply. The role is a ${selectedJob()?.title || 'senior recruitment position'} with clear desk ownership, BD responsibility, and strong growth potential. Happy to send over a short summary or set up a quick call if easier.`;
       return (
         '<article class="thread-card surface">' +
           `<div class="section-head"><div><div class="label-caps">Inbox</div><h2 class="section-title small">${esc(candidate.name)}</h2><div class="candidate-sub">${esc(candidate.title)} · ${esc(candidate.company)}</div></div><button class="btn btn-secondary btn-sm" data-action="toggle-draft" data-id="${esc(candidate.id)}">Draft Reply</button></div>` +
-          `<div class="thread-preview">Hi, thanks for reaching out — I'd be open to hearing more about the opportunity. What does the role involve?</div>` +
-          '<div class="reply-draft-block hidden" id="draft-' + esc(candidate.id) + '">' +
-            `<textarea class="input textarea" data-draft-id="${esc(candidate.id)}">${esc(draft)}</textarea>` +
-          '</div>' +
+          '<div class="thread-preview">Hi, thanks for reaching out — I\'d be open to hearing more about the opportunity. What does the role involve?</div>' +
+          '<div class="reply-draft-block hidden" id="draft-' + esc(candidate.id) + '"><textarea class="input textarea" data-draft-id="' + esc(candidate.id) + '">' + esc(draft) + '</textarea></div>' +
         '</article>'
       );
     }).join('') || '<div class="surface empty-state">No replies yet.</div>';
@@ -479,30 +571,22 @@
       ['Interview Scheduling', 'When a candidate is qualified, Raxion coordinates interview scheduling directly with your ATS. Your team gets a notification. The candidate gets booked. You never touch a calendar.'],
       ['Train Your Agent', 'Raxion learns your voice, your scoring criteria, and your reply style. Changes take effect on the next cycle. Update the guidance, press Save, and Raxion immediately works differently.'],
     ].map(([title, copy]) => '<div class="surface control-card"><div class="label-caps">Controls</div><h3 class="section-title small">' + esc(title) + '</h3><p>' + esc(copy) + '</p></div>').join('');
+
     return (
       '<section class="view-section">' +
         demoBanner() +
         '<div class="surface"><div class="section-head"><div><div class="label-caps">Controls</div><h2 class="section-title">How Raxion Works</h2></div></div><div class="controls-grid">' + cards + '</div></div>' +
-        '<div class="surface controls-cta"><div><div class="label-caps">Deploy</div><h2 class="section-title">Ready to deploy Raxion at <span data-company>' + esc(company) + '</span>?</h2><p>Your recruiters close more. Your team does less admin. Raxion runs the rest.</p></div><div><a class="btn btn-primary" href="' + esc(BOOKING_URL) + '" target="_blank" rel="noreferrer">Book a call with LIBDR →</a><div class="candidate-sub cta-sub">Free 30-minute strategy session. We\'ll show you what Raxion would look like on your desk.</div></div></div>' +
+        '<div class="surface controls-cta"><div><div class="label-caps">Deploy</div><h2 class="section-title">Ready to deploy Raxion at <span data-company>' + esc(company) + '</span>?</h2><p>Your recruiters close more. Your team does less admin. Raxion runs the rest.</p></div><div>' + bookCallLink('controls', 'Book a call with LIBDR →') + '<div class="candidate-sub cta-sub">Free 30-minute strategy session. We\'ll show you what Raxion would look like on your desk.</div></div></div>' +
       '</section>'
     );
   }
 
   function renderTrainAgent() {
     const tab = STATE.trainTab;
-    const tabFields = tab === 'outreach'
-      ? (
-        '<div class="train-agent-grid">' +
-          '<section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Outreach</div><h3 class="section-title small">Voice Rules</h3></div></div><textarea class="input textarea" name="voiceRules">' + esc(STATE.trainAgent.outreach.voiceRules) + '</textarea></section>' +
-          '<section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Replies</div><h3 class="section-title small">Reply Handling</h3></div></div><textarea class="input textarea" name="replyHandling">' + esc(STATE.trainAgent.outreach.replyHandling) + '</textarea></section>' +
-        '</div>'
-      )
-      : (
-        '<div class="train-agent-grid">' +
-          '<section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Sourcing</div><h3 class="section-title small">Fit Criteria</h3></div></div><textarea class="input textarea" name="fitCriteria">' + esc(STATE.trainAgent.sourcing.fitCriteria) + '</textarea></section>' +
-          '<section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Sourcing</div><h3 class="section-title small">Exclusions</h3></div></div><textarea class="input textarea" name="exclusions">' + esc(STATE.trainAgent.sourcing.exclusions) + '</textarea></section>' +
-        '</div>'
-      );
+    const body = tab === 'outreach'
+      ? '<div class="train-agent-grid"><section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Outreach</div><h3 class="section-title small">Voice Rules</h3></div></div><textarea class="input textarea" name="voiceRules">' + esc(STATE.trainAgent.outreach.voiceRules) + '</textarea></section><section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Replies</div><h3 class="section-title small">Reply Handling</h3></div></div><textarea class="input textarea" name="replyHandling">' + esc(STATE.trainAgent.outreach.replyHandling) + '</textarea></section></div>'
+      : '<div class="train-agent-grid"><section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Sourcing</div><h3 class="section-title small">Fit Criteria</h3></div></div><textarea class="input textarea" name="fitCriteria">' + esc(STATE.trainAgent.sourcing.fitCriteria) + '</textarea></section><section class="surface train-agent-section"><div class="section-head"><div><div class="label-caps">Sourcing</div><h3 class="section-title small">Exclusions</h3></div></div><textarea class="input textarea" name="exclusions">' + esc(STATE.trainAgent.sourcing.exclusions) + '</textarea></section></div>';
+
     return (
       '<section class="view-section">' +
         demoBanner() +
@@ -512,22 +596,14 @@
           metricCard('Replies', 'Closure', 'Closure + escalation') +
           metricCard('Sourcing', 'Fit', 'Fit + exclusions') +
         '</div>' +
-        '<form id="train-agent-form" class="view-section">' +
-          '<div class="tab-row"><button class="tab-button' + (tab === 'outreach' ? ' active' : '') + '" type="button" data-action="set-train-tab" data-id="outreach">Outreach</button><button class="tab-button' + (tab === 'sourcing' ? ' active' : '') + '" type="button" data-action="set-train-tab" data-id="sourcing">Sourcing</button></div>' +
-          tabFields +
-          '<div class="button-row"><button class="btn btn-primary" type="submit">Save & Apply</button></div>' +
-        '</form>' +
+        '<form id="train-agent-form" class="view-section"><div class="tab-row"><button class="tab-button' + (tab === 'outreach' ? ' active' : '') + '" type="button" data-action="set-train-tab" data-id="outreach">Outreach</button><button class="tab-button' + (tab === 'sourcing' ? ' active' : '') + '" type="button" data-action="set-train-tab" data-id="sourcing">Sourcing</button></div>' + body + '<div class="button-row"><button class="btn btn-primary" type="submit">Save & Apply</button></div></form>' +
       '</section>'
     );
   }
 
   function renderActivityRows(items) {
     return (items || []).map((item) => (
-      '<div class="activity-event-row">' +
-        '<div class="activity-timestamp">' + esc(relativeTime(item.createdAt)) + '</div>' +
-        '<div class="activity-chip ' + esc(activityChip(item.type)) + '">' + esc(item.type) + '</div>' +
-        '<div class="activity-description">' + esc(item.text) + '</div>' +
-      '</div>'
+      '<div class="activity-event-row"><div class="activity-timestamp">' + esc(relativeTime(item.createdAt)) + '</div><div class="activity-chip ' + esc(activityChip(item.type)) + '">' + esc(item.type) + '</div><div class="activity-description">' + esc(item.text) + '</div></div>'
     )).join('') || '<div class="empty-state">No activity yet.</div>';
   }
 
@@ -547,50 +623,21 @@
   function renderCandidatePanel() {
     const candidate = STATE.candidates.find((item) => item.id === STATE.candidatePanelId);
     if (!candidate) return '';
-    const history = candidate.stageHistory.map((item) => (
-      '<div class="conversation-card"><div class="conversation-meta">' + esc(relativeTime(item.at)) + '</div><div><strong>' + esc(item.label) + '</strong><div>' + esc(item.text) + '</div></div></div>'
-    )).join('');
+    const history = candidate.stageHistory.map((item) => '<div class="conversation-card"><div class="conversation-meta">' + esc(relativeTime(item.at)) + '</div><div><strong>' + esc(item.label) + '</strong><div>' + esc(item.text) + '</div></div></div>').join('');
     return (
       '<div class="drawer-backdrop" data-action="close-candidate"></div>' +
-      '<aside class="drawer">' +
-        '<div class="drawer-head"><div><div class="label-caps">Candidate</div><h2 class="section-title">' + esc(candidate.name) + '</h2><div class="candidate-sub">' + esc(candidate.title) + ' · ' + esc(candidate.company) + '</div></div><button class="btn btn-secondary btn-sm" data-action="close-candidate">Close</button></div>' +
-        '<div class="drawer-body">' +
-          '<div class="panel-block"><div class="panel-grid"><div><span class="panel-label">LinkedIn</span><strong><a href="' + esc(candidate.linkedinUrl) + '" target="_blank" rel="noreferrer">' + esc(candidate.linkedinHandle) + '</a></strong></div><div><span class="panel-label">Fit Score</span>' + scorePill(candidate.fitScore) + '</div><div><span class="panel-label">Tier</span>' + tierChip(candidate.tier) + '</div><div><span class="panel-label">Stage</span>' + stageChip(candidate.stage) + '</div></div></div>' +
-          '<div class="panel-block"><div class="panel-label">Score rationale</div><p>' + esc(candidate.rationale) + '</p></div>' +
-          '<div class="panel-block"><div class="panel-label">Stage history</div>' + history + '</div>' +
-          (candidate.stage === 'shortlisted'
-            ? '<div class="button-row"><button class="btn btn-primary btn-sm" data-action="queue-outreach" data-id="' + esc(candidate.id) + '">Queue for Outreach</button></div>'
-            : '') +
-        '</div>' +
-      '</aside>'
+      '<aside class="drawer"><div class="drawer-head"><div><div class="label-caps">Candidate</div><h2 class="section-title">' + esc(candidate.name) + '</h2><div class="candidate-sub">' + esc(candidate.title) + ' · ' + esc(candidate.company) + '</div></div><button class="btn btn-secondary btn-sm" data-action="close-candidate">Close</button></div><div class="drawer-body"><div class="panel-block"><div class="panel-grid"><div><span class="panel-label">LinkedIn</span><strong><a href="' + esc(candidate.linkedinUrl) + '" target="_blank" rel="noreferrer">' + esc(candidate.linkedinHandle) + '</a></strong></div><div><span class="panel-label">Fit Score</span>' + scorePill(candidate.fitScore) + '</div><div><span class="panel-label">Tier</span>' + tierChip(candidate.tier) + '</div><div><span class="panel-label">Stage</span>' + stageChip(candidate.stage) + '</div></div></div><div class="panel-block"><div class="panel-label">Score rationale</div><p>' + esc(candidate.rationale) + '</p></div><div class="panel-block"><div class="panel-label">Stage history</div>' + history + '</div>' + (candidate.stage === 'shortlisted' ? '<div class="button-row"><button class="btn btn-primary btn-sm" data-action="queue-outreach" data-id="' + esc(candidate.id) + '">Queue for Outreach</button></div>' : '') + '</div></aside>'
     );
   }
 
   function renderSourcingOverlay() {
     if (!STATE.sourcingActive) return '';
-    return (
-      '<div class="sourcing-card">' +
-        '<div class="sourcing-head"><div class="sourcing-spinner"></div><div><strong>Raxion is sourcing...</strong><div class="candidate-sub">' + esc(SOURCE_MESSAGES[STATE.sourcingMessageIndex]) + '</div></div></div>' +
-        '<div class="sourcing-count">' + esc(STATE.sourcingCount) + ' candidates found</div>' +
-        '<div class="mini-progress"><span class="mini-progress-segment" style="width:' + esc(Math.min(100, STATE.sourcingCount * 4)) + '%;background:var(--accent);"></span></div>' +
-      '</div>'
-    );
+    return '<div class="sourcing-card"><div class="sourcing-head"><div class="sourcing-spinner"></div><div><strong>Raxion is sourcing...</strong><div class="candidate-sub">' + esc(SOURCE_MESSAGES[STATE.sourcingMessageIndex]) + '</div></div></div><div class="sourcing-count">' + esc(STATE.sourcingCount) + ' candidates found</div><div class="mini-progress"><span class="mini-progress-segment" style="width:' + esc(Math.min(100, STATE.sourcingCount * 4)) + '%;background:var(--accent);"></span></div></div>';
   }
 
   function renderWelcomeModal() {
     if (!STATE.welcomeOpen) return '';
-    return (
-      '<div class="modal-backdrop welcome-backdrop"></div>' +
-      '<div class="modal-shell welcome-shell">' +
-        '<div class="surface modal-card welcome-card">' +
-          '<button class="welcome-close" type="button" data-action="dismiss-welcome" aria-label="Close">×</button>' +
-          '<div class="label-caps">Welcome</div>' +
-          '<h2 class="section-title">Welcome to Raxion for ' + esc(company) + '</h2>' +
-          '<p class="welcome-copy">This demo is set up to show how Raxion sources, scores, drafts outreach, handles approvals, and trains to your operating style. Start with Controls to see exactly what the system does.</p>' +
-          '<div class="button-row"><button class="btn btn-primary" type="button" data-action="dismiss-welcome">See How Raxion Works</button></div>' +
-        '</div>' +
-      '</div>'
-    );
+    return '<div class="modal-backdrop welcome-backdrop"></div><div class="modal-shell welcome-shell"><div class="surface modal-card welcome-card"><button class="welcome-close" type="button" data-action="dismiss-welcome" aria-label="Close">×</button><div class="label-caps">Welcome</div><h2 class="section-title">' + esc(welcomeName) + '</h2><p class="welcome-copy">This demo is set up to show how Raxion sources, scores, drafts outreach, handles approvals, and trains to your operating style. Start with Controls to see exactly what the system does.</p><div class="candidate-sub welcome-slug">Suggested outreach URL slug: ' + esc(makeCompanySlug(company)) + (recipientName ? `?name=${esc(recipientName)}` : '') + '</div><div class="button-row"><button class="btn btn-primary" type="button" data-action="dismiss-welcome">See How Raxion Works</button></div></div></div>';
   }
 
   function render() {
@@ -629,19 +676,14 @@
   function createCandidate(job) {
     const first = randomFrom(FIRST_NAMES);
     const last = randomFrom(LAST_NAMES);
-    const fitBucket = Math.random();
-    let fitScore = 0;
-    if (fitBucket < 0.3) fitScore = rand(80, 95);
-    else if (fitBucket < 0.7) fitScore = rand(65, 79);
-    else fitScore = rand(40, 64);
+    const bucket = Math.random();
+    const fitScore = bucket < 0.3 ? rand(80, 95) : bucket < 0.7 ? rand(65, 79) : rand(40, 64);
     const tier = fitScore >= 80 ? 'HOT' : fitScore >= 65 ? 'WARM' : 'COLD';
     const stage = tier === 'HOT' ? 'shortlisted' : tier === 'WARM' ? 'sourced' : 'archived';
     const name = `${first} ${last}`;
     const title = randomFrom(TITLES);
     const employer = randomFrom(COMPANIES);
     const experience = rand(3, 15);
-    const linkedinHandle = `linkedin.com/in/${slugify(name)}`;
-    const rationale = `${first} is currently a ${title} at ${employer} with ${experience} years of relevant experience. Their background maps cleanly to ${job.title} because it combines delivery ownership, commercial credibility, and direct market overlap.`;
     const candidate = {
       id: `candidate_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
       jobId: job.id,
@@ -653,9 +695,9 @@
       tier,
       stage,
       lastAction: stage === 'archived' ? 'Auto-archived after scoring' : stage === 'shortlisted' ? 'Shortlisted just now' : 'Sourced just now',
-      rationale,
-      linkedinUrl: `https://${linkedinHandle}`,
-      linkedinHandle,
+      rationale: `${first} is currently a ${title} at ${employer} with ${experience} years of relevant experience. Their background maps cleanly to ${job.title} because it combines delivery ownership, commercial credibility, and direct market overlap.`,
+      linkedinHandle: `linkedin.com/in/${slugify(name)}`,
+      linkedinUrl: `https://linkedin.com/in/${slugify(name)}`,
       hasReplied: tier === 'HOT' && Math.random() < 0.1,
       location: randomFrom(LOCATIONS),
       stageHistory: [
@@ -701,22 +743,21 @@
       STATE.approvals.push(createApproval(candidate, job));
     });
     pushActivity('SOURCING_COMPLETE', `Sourcing complete — ${count} candidates found, ${created.filter((item) => item.tier !== 'COLD').length} shortlisted, ${hot.length} queued for approval`, job.id);
+    trackEvent('SOURCING_COMPLETE', `${count} candidates`);
     STATE.sourcingActive = false;
-    STATE.sourcingJobId = null;
     STATE.sourcingCount = 0;
     STATE.sourcingMessageIndex = 0;
-    STATE.view = 'pipeline';
     STATE.selectedJobId = job.id;
     STATE.selectedPipelineTab = 'all';
-    render();
+    navigate('pipeline');
   }
 
-  function startSourcing(job) {
+  function startSourcing(job, source = 'button') {
     if (STATE.sourcingActive) return;
     STATE.sourcingActive = true;
-    STATE.sourcingJobId = job.id;
     STATE.sourcingCount = 0;
     STATE.sourcingMessageIndex = 0;
+    if (source === 'button') trackEvent('SOURCE_NOW_CLICKED', job.title);
     render();
     STATE.sourcingTimer = setInterval(() => {
       STATE.sourcingCount += rand(1, 3);
@@ -756,9 +797,9 @@
     STATE.jobs.unshift(job);
     STATE.selectedJobId = job.id;
     pushActivity('JOB_LAUNCHED', `Pipeline launched: ${job.title} for ${job.client}`, job.id);
-    STATE.view = 'pipeline';
-    render();
-    startSourcing(job);
+    trackEvent('JOB_LAUNCHED', job.title);
+    navigate('pipeline');
+    startSourcing(job, 'launch');
   }
 
   function queueOutreach(candidateId) {
@@ -777,6 +818,7 @@
     const approval = STATE.approvals.find((item) => item.id === id);
     if (!approval) return;
     approval.status = 'approved';
+    trackEvent('APPROVAL_APPROVED', approval.name);
     pushActivity('APPROVAL_ACTIONED', `DM to ${approval.name} approved — queued for sending window`, approval.jobId);
     toast('Message approved and queued.', 'success');
     render();
@@ -785,6 +827,7 @@
   function skipApproval(id) {
     const approval = STATE.approvals.find((item) => item.id === id);
     if (!approval) return;
+    trackEvent('APPROVAL_SKIPPED', approval.name);
     pushActivity('APPROVAL_SKIPPED', `DM to ${approval.name} skipped`, approval.jobId);
     const node = document.querySelector(`[data-approval-id="${id}"]`);
     if (node) node.classList.add('approval-faded');
@@ -821,29 +864,29 @@
 
       if (trigger.classList.contains('nav-link')) {
         event.preventDefault();
-        STATE.view = trigger.dataset.view;
-        window.location.hash = STATE.view;
-        render();
+        navigate(trigger.dataset.view);
         return;
       }
 
       const action = trigger.dataset.action;
       const id = trigger.dataset.id;
+
       if (action === 'goto-jobs') {
-        STATE.view = 'jobs';
-        render();
+        navigate('jobs');
       } else if (action === 'open-job') {
         STATE.selectedJobId = id;
-        STATE.view = 'pipeline';
-        render();
+        navigate('pipeline');
       } else if (action === 'source-now') {
         const job = STATE.jobs.find((item) => item.id === id);
         if (job) startSourcing(job);
       } else if (action === 'set-pipeline-tab') {
         STATE.selectedPipelineTab = id;
+        trackEvent('PIPELINE_TAB', id);
         render();
       } else if (action === 'open-candidate') {
         STATE.candidatePanelId = id || trigger.closest('tr')?.dataset.id;
+        const candidate = STATE.candidates.find((item) => item.id === STATE.candidatePanelId);
+        if (candidate) trackEvent('CANDIDATE_VIEWED', candidate.name);
         render();
       } else if (action === 'close-candidate') {
         STATE.candidatePanelId = null;
@@ -862,9 +905,12 @@
         if (el) el.classList.toggle('hidden');
       } else if (action === 'dismiss-welcome') {
         STATE.welcomeOpen = false;
-        STATE.view = 'controls';
-        window.location.hash = 'controls';
-        render();
+        navigate('controls');
+      } else if (action === 'book-call') {
+        const source = trigger.dataset.source;
+        if (source === 'banner') trackEvent('BANNER_BOOK_CALL_CLICKED', window.location.pathname);
+        else trackEvent('BOOK_CALL_CLICKED', window.location.pathname);
+        flushSessionWithoutLock();
       }
     });
 
@@ -883,6 +929,7 @@
           STATE.trainAgent.sourcing.fitCriteria = form.querySelector('[name="fitCriteria"]').value;
           STATE.trainAgent.sourcing.exclusions = form.querySelector('[name="exclusions"]').value;
         }
+        trackEvent('TRAIN_AGENT_SAVED', '');
         pushActivity('AGENT_TRAINING_UPDATED', 'Train Agent guidance updated — changes live on next cycle');
         toast('Guidance saved. Raxion updated.', 'success');
         render();
@@ -895,8 +942,7 @@
     });
 
     document.getElementById('launch-job').addEventListener('click', () => {
-      STATE.view = 'jobs';
-      render();
+      navigate('jobs');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
@@ -905,25 +951,29 @@
     });
 
     window.addEventListener('hashchange', () => {
-      STATE.view = (window.location.hash || '#overview').slice(1) || 'overview';
-      render();
+      const next = (window.location.hash || '#overview').slice(1) || 'overview';
+      if (next !== STATE.view) navigate(next, { updateHash: false });
     });
+
+    window.addEventListener('beforeunload', () => {
+      flushSession();
+    });
+  }
+
+  function showWelcomeModal() {
+    const storageKey = `raxion-demo-welcome:${window.location.pathname || '/'}:${recipientName || 'anon'}`;
+    if (window.sessionStorage.getItem(storageKey)) return;
+    window.sessionStorage.setItem(storageKey, '1');
+    STATE.welcomeOpen = true;
+    render();
   }
 
   function init() {
     pushActivity('DEMO_READY', `Mission Control demo initialised for ${company}`);
     bindEvents();
     STATE.activityTicker = setInterval(autoActivityTick, 8000);
-    render();
+    navigate(STATE.view, { updateHash: false });
     showWelcomeModal();
-  }
-
-  function showWelcomeModal() {
-    const storageKey = `raxion-demo-welcome:${window.location.pathname || '/'}`;
-    if (window.sessionStorage.getItem(storageKey)) return;
-    window.sessionStorage.setItem(storageKey, '1');
-    STATE.welcomeOpen = true;
-    render();
   }
 
   init();
